@@ -7,6 +7,8 @@
 from PyKDE4 import kdecore
 from PyKDE4 import kdeui
 from PyQt4 import QtCore, QtGui
+from PyQt4.QtCore import SIGNAL
+from PIL import ImageQt
 
 try:
     _fromUtf8 = QtCore.QString.fromUtf8
@@ -22,12 +24,25 @@ except AttributeError:
     def _translate(context, text, disambig):
         return QtGui.QApplication.translate(context, text, disambig)
 
+class ResizableImageLabel(QtGui.QLabel):
+
+    def __init__(self,parent=None):
+        QtGui.QLabel.__init__(self,parent)
+        self.scaledContents = True
+        self.setAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter)
+
+    def resizeEvent(self, evt=None):
+        self.emit(SIGNAL('resize()'))
+        return QtGui.QLabel.resizeEvent(self, evt)
+
 class MainWindow(QtGui.QMainWindow):
     def __init__(self):
         super(MainWindow, self).__init__()
         self.setupUi()
         self.saveButton.clicked.connect(self.close)
         self.actionQuit.activated.connect(self.close)
+        self.scanButton.clicked.connect(self.scan)
+        self.connect(self.previewView, SIGNAL('resize()'), self.updatePreview)
 
     def setupUi(self):
         self.centralwidget = QtGui.QWidget(self)
@@ -46,9 +61,16 @@ class MainWindow(QtGui.QMainWindow):
         scanSettingsLayout.addWidget(self.reduceColorsButton)
         scanSettingsLayout.addWidget(self.numColorSpinBox)
 
+        colorSpacerLeft = QtGui.QSpacerItem(40, 20, QtGui.QSizePolicy.Expanding, QtGui.QSizePolicy.Minimum)
         self.colorEditorCells = KColorCells(self.centralwidget,4,4)
+        colorSpacerRight = QtGui.QSpacerItem(40, 20, QtGui.QSizePolicy.Expanding, QtGui.QSizePolicy.Minimum)
 
-        self.previewView = QtGui.QGraphicsView(self.centralwidget)
+        colorEditorLayout = QtGui.QHBoxLayout()
+        colorEditorLayout.addItem(colorSpacerLeft)
+        colorEditorLayout.addWidget(self.colorEditorCells,0)
+        colorEditorLayout.addItem(colorSpacerRight)
+
+        self.previewView = ResizableImageLabel(self.centralwidget)
         self.previewView.setMinimumSize(QtCore.QSize(400, 400))
 
         self.baseFileNameRequester = KUrlRequester(self.centralwidget)
@@ -74,12 +96,12 @@ class MainWindow(QtGui.QMainWindow):
 
         verticalLayout = QtGui.QVBoxLayout(self.centralwidget)
         verticalLayout.setMargin(0)
-        verticalLayout.addLayout(scanSettingsLayout)
-        verticalLayout.addWidget(self.colorEditorCells)
-        verticalLayout.addWidget(self.previewView)
-        verticalLayout.addLayout(filenameLayout)
-        verticalLayout.addLayout(outputNameLayout)
-        verticalLayout.addLayout(saveButtonLayout)
+        verticalLayout.addLayout(scanSettingsLayout,0)
+        verticalLayout.addLayout(colorEditorLayout,0)
+        verticalLayout.addWidget(self.previewView,1)
+        verticalLayout.addLayout(filenameLayout,0)
+        verticalLayout.addLayout(outputNameLayout,0)
+        verticalLayout.addLayout(saveButtonLayout,0)
 
         self.setCentralWidget(self.centralwidget)
 
@@ -109,7 +131,16 @@ class MainWindow(QtGui.QMainWindow):
         self.actionQuit.setText(kdecore.i18n(_fromUtf8("Quit")))
 
     def scan(self):
-        pass
+        #pic = self.device.scan()
+        #self.scanned_image = ImageQt.ImageQt(pic)
+        self.scanned_image = QtGui.QImage("test.png")
+        self.updatePreview()
+
+    def updatePreview(self):
+        scaled_image = self.scanned_image.scaled(self.previewView.size(), aspectRatioMode=QtCore.Qt.KeepAspectRatio)
+        pm = QtGui.QPixmap.fromImage(scaled_image)
+        self.previewView.setPixmap(pm)
+
 
 from PyKDE4.kio import KUrlRequester
 from PyKDE4.kdeui import KColorCells, KPushButton, KIntSpinBox
