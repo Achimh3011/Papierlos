@@ -5,10 +5,8 @@
 #
 # WARNING! All changes to this file will be lost.
 from PyKDE4 import kdecore
-from PyKDE4 import kdeui
 from PyQt4 import QtCore, QtGui
 from PyQt4.QtCore import SIGNAL
-from PIL import ImageQt
 
 try:
     _fromUtf8 = QtCore.QString.fromUtf8
@@ -38,7 +36,9 @@ class ResizableImageLabel(QtGui.QLabel):
 class MainWindow(QtGui.QMainWindow):
     def __init__(self):
         super(MainWindow, self).__init__()
+        self.scanned_image = None
         self.setupUi()
+
         self.saveButton.clicked.connect(self.close)
         self.actionQuit.activated.connect(self.close)
         self.scanButton.clicked.connect(self.scan)
@@ -62,7 +62,7 @@ class MainWindow(QtGui.QMainWindow):
         scanSettingsLayout.addWidget(self.numColorSpinBox)
 
         colorSpacerLeft = QtGui.QSpacerItem(40, 20, QtGui.QSizePolicy.Expanding, QtGui.QSizePolicy.Minimum)
-        self.colorEditorCells = KColorCells(self.centralwidget,4,4)
+        self.colorEditorCells = KColorCells(self.centralwidget,16,16)
         colorSpacerRight = QtGui.QSpacerItem(40, 20, QtGui.QSizePolicy.Expanding, QtGui.QSizePolicy.Minimum)
 
         colorEditorLayout = QtGui.QHBoxLayout()
@@ -135,11 +135,20 @@ class MainWindow(QtGui.QMainWindow):
         #self.scanned_image = ImageQt.ImageQt(pic)
         self.scanned_image = QtGui.QImage("test.png")
         self.updatePreview()
+        self.updateColorCells()
 
     def updatePreview(self):
-        scaled_image = self.scanned_image.scaled(self.previewView.size(), aspectRatioMode=QtCore.Qt.KeepAspectRatio)
-        pm = QtGui.QPixmap.fromImage(scaled_image)
-        self.previewView.setPixmap(pm)
+        if self.scanned_image:
+            scaled_image = self.scanned_image.scaled(self.previewView.size(), aspectRatioMode=QtCore.Qt.KeepAspectRatio)
+            pm = QtGui.QPixmap.fromImage(scaled_image)
+            self.previewView.setPixmap(pm)
+
+    def updateColorCells(self):
+        if self.scanned_image:
+            colors = [QtGui.QColor(rgb) for rgb in self.scanned_image.colorTable()]
+            for i,c in enumerate(colors):
+                print i, c.name()
+                self.colorEditorCells.setColor(i, c)
 
 
 from PyKDE4.kio import KUrlRequester
