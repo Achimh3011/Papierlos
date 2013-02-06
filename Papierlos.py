@@ -3,6 +3,9 @@ from PyQt4 import QtGui
 from PyKDE4 import kdeui
 import mainwindow
 import sane
+import logging
+
+logging.basicConfig(level=logging.DEBUG)
 
 app = QtGui.QApplication(sys.argv)
 
