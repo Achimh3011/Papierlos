@@ -1,9 +1,9 @@
 
-from PyKDE4.kio import KUrlRequester
-from PyKDE4.kdeui import KColorCells, KPushButton, KIntSpinBox
-from PyKDE4 import kdecore
-from PyQt4 import QtCore, QtGui
-from PyQt4.QtCore import SIGNAL
+from PyKDE4.kio import KUrlRequester  #@UnresolvedImport  #@IgnorePep8
+from PyKDE4.kdeui import KColorCells, KPushButton, KIntSpinBox  #@UnresolvedImport  #@IgnorePep8
+from PyKDE4 import kdecore  #@UnresolvedImport  #@IgnorePep8
+from PyQt4 import QtCore, QtGui  #@UnresolvedImport  #@IgnorePep8
+from PyQt4.QtCore import SIGNAL  #@UnresolvedImport  #@IgnorePep8
 from PIL import Image  #@UnresolvedImport #@IgnorePep8
 import ImageQt
 
@@ -24,6 +24,12 @@ try:
 except AttributeError:
     def _translate(context, text, disambig):
         return QtGui.QApplication.translate(context, text, disambig)
+
+
+def crop(image):
+    sx, sy = [4 * (s / 4) for s in image.size]
+    log.info("Cropping image to size %dx%d." % (sx, sy))
+    return image.transform((sx, sy), Image.EXTENT, (0, 0, sx, sy))
 
 
 class ResizableImageLabel(QtGui.QLabel):
@@ -48,7 +54,7 @@ class MainWindow(QtGui.QMainWindow):
         self.saveButton.clicked.connect(self.close)
         self.actionQuit.activated.connect(self.close)
         self.scanButton.clicked.connect(self.scan)
-        self.reduceColorsButton.clicked.connect(self.reduceColorsPressed)
+        self.reduceColorsButton.clicked.connect(self.filterOutUnimportantColors)
         self.connect(self.previewView, SIGNAL('resize()'), self.updatePreview)
 
     def setupUi(self):
@@ -60,7 +66,7 @@ class MainWindow(QtGui.QMainWindow):
         self.numColorSpinBox = KIntSpinBox(self.centralwidget)
         self.numColorSpinBox.setMinimum(2)
         self.numColorSpinBox.setMaximum(16)
-        self.numColorSpinBox.setProperty("value", 8)
+        self.numColorSpinBox.setProperty("value", 16)
 
         scanSettingsLayout = QtGui.QHBoxLayout()
         scanSettingsLayout.addWidget(self.scanButton)
@@ -142,14 +148,11 @@ class MainWindow(QtGui.QMainWindow):
         mode = self.scanned_pil.mode
         info = self.scanned_pil.info
         self.statusbar.showMessage('Size: "%dx%d", Mode: "%s, Info: "%s"' % (size[0], size[1], mode, info))
-        #self.scanned_pil.show()
 
     def scan(self):
         self.scanned_pil = self.device.scan()
-        #self.scanned_pil = Image.open("test.png")
         self.showInfo()
-        self.scanned_image = ImageQt.ImageQt(self.scanned_pil)
-        self.updatePreview()
+        self.scanned_image = ImageQt.ImageQt(crop(self.scanned_pil))
         self.updateColorCells()
         self.updatePreview()
 
@@ -161,29 +164,64 @@ class MainWindow(QtGui.QMainWindow):
 
     def updateColorCells(self):
         if self.scanned_image:
+            if self.scanned_pil.mode != 'P':
+                self.convertImage()
             colors = [QtGui.QColor(rgb) for rgb in self.scanned_image.colorTable()]
             for i, c in enumerate(colors):
                 self.colorEditorCells.setColor(i, c)
+        else:
+            for i in range(self.colorEditorCells.count()):
+                self.colorEditorCells.setColor(i, QtGui.QColor())
 
     def reduceColorsPressed(self):
         self.reduceColors(self.numColorSpinBox.value())
         self.updateColorCells()
 
+    def convertImage(self):
+        converted = crop(self.scanned_pil).convert('P')
+        colortable = []
+        palette = converted.getpalette()
+        for i in range(0, len(palette), 3):
+            colortable.append(QtGui.qRgb(*palette[i:i + 3]))
+        self.scanned_pil = converted
+
+        self.scanned_image = ImageQt.ImageQt(converted)
+        self.scanned_image.setColorTable(colortable)
+
+    def filterOutUnimportantColors(self):
+        if self.scanned_pil:
+            log.info("Removing unimportant colors.")
+            if self.scanned_pil.mode != 'P':
+                self.convertImage()
+            num_color = self.numColorSpinBox.value()
+            histo = self.scanned_pil.histogram()
+            log.debug('Histogram: %s' % histo)
+            histo = zip(range(len(histo)), histo)
+            log.debug('Histogram zipped: %s' % histo)
+            histo.sort(key=lambda x: -x[1])
+            log.debug('Histogram sorted: %s' % histo)
+
+            colors = self.scanned_pil.getpalette()
+            for ci, freq in histo[num_color:]:
+                color = colors[ci * 3:ci * 3 + 3]
+                log.info("Removed color %d (%d,%d,%d) %d px." % (ci, color[0], color[1], color[2], freq))
+                c = 0 if sum(color[:]) < 384 else 255
+                colors[ci * 3:ci * 3 + 3] = [c, c, c]
+            log.info("Colors now %d: %s" % (len(colors), str(colors)))
+            self.scanned_pil.putpalette(colors)
+            colortable = []
+            for i in range(0, len(colors), 3):
+                colortable.append(QtGui.qRgb(*colors[i:i + 3]))
+            self.scanned_image = ImageQt.ImageQt(crop(self.scanned_pil))
+            self.scanned_image.setColorTable(colortable)
+            self.updateColorCells()
+            self.updatePreview()
+
     def reduceColors(self, num):
         if self.scanned_pil:
             log.info('Reducing colors to %d' % num)
             self.scanned_pil = self.scanned_pil.quantize(num, method=0)
-            sx, sy = [4 * ((s - 1) / 4) for s in self.scanned_pil.size]
-            log.info("Cropping image to size %dx%d." % (sx, sy))
-            converted = self.scanned_pil.transform((sx, sy), Image.EXTENT, (0, 0, sx, sy))
-            converted = converted.convert('P')
-            colortable = []
-            palette = converted.getpalette()
-            for i in range(0, len(palette), 3):
-                colortable.append(QtGui.qRgb(*palette[i:i + 3]))
-
-            self.scanned_image = ImageQt.ImageQt(converted)
-            self.scanned_image.setColorTable(colortable)
+            self.convertImage()
             self.showInfo()
             self.updatePreview()
             self.updateColorCells()
