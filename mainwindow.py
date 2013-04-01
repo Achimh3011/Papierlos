@@ -32,6 +32,10 @@ def crop(image):
     return image.transform((sx, sy), Image.EXTENT, (0, 0, sx, sy))
 
 
+def dist(color1, color2):
+    return sum([abs(c1 - c2) for  c1, c2 in zip(color1, color2)])
+
+
 class ResizableImageLabel(QtGui.QLabel):
 
     def __init__(self, parent=None):
@@ -188,12 +192,13 @@ class MainWindow(QtGui.QMainWindow):
         self.scanned_image = ImageQt.ImageQt(converted)
         self.scanned_image.setColorTable(colortable)
 
+
     def filterOutUnimportantColors(self):
         if self.scanned_pil:
             log.info("Removing unimportant colors.")
             if self.scanned_pil.mode != 'P':
                 self.convertImage()
-            num_color = self.numColorSpinBox.value()
+            num_color = self.numColorSpinBox.value()-1
             histo = self.scanned_pil.histogram()
             log.debug('Histogram: %s' % histo)
             histo = zip(range(len(histo)), histo)
@@ -201,12 +206,23 @@ class MainWindow(QtGui.QMainWindow):
             histo.sort(key=lambda x: -x[1])
             log.debug('Histogram sorted: %s' % histo)
 
+            ref_colors = [(c,c,c) for c in range(0,256,256/num_color)] + [(255,255,255)]
+
             colors = self.scanned_pil.getpalette()
-            for ci, freq in histo[num_color:]:
+            for ci, freq in histo:
+            #for ci, freq in histo[num_color:]:
                 color = colors[ci * 3:ci * 3 + 3]
-                log.info("Removed color %d (%d,%d,%d) %d px." % (ci, color[0], color[1], color[2], freq))
-                c = 0 if sum(color[:]) < 384 else 255
-                colors[ci * 3:ci * 3 + 3] = [c, c, c]
+                distances = []
+                #for cr, dummy in histo[:num_color]:
+                #    ref_color = colors[cr * 3:cr * 3 + 3]
+                for ref_color in ref_colors:
+                    distances.append(dist(ref_color, color))
+                nearest = min(xrange(len(distances)), key=distances.__getitem__)
+                #cn = histo[nearest][0]
+                #nearest_color = colors[cn * 3:cn * 3 + 3]
+                nearest_color = ref_colors[nearest]
+                #log.info("Removed color %d (%d,%d,%d) %d px." % (ci, color[0], color[1], color[2], freq))
+                colors[ci * 3:ci * 3 + 3] = nearest_color
             log.info("Colors now %d: %s" % (len(colors), str(colors)))
             self.scanned_pil.putpalette(colors)
             colortable = []
