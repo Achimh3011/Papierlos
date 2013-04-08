@@ -4,10 +4,12 @@ from PyKDE4.kdeui import KColorCells, KPushButton, KIntSpinBox  #@UnresolvedImpo
 from PyKDE4 import kdecore  #@UnresolvedImport  #@IgnorePep8
 from PyQt4 import QtCore, QtGui  #@UnresolvedImport  #@IgnorePep8
 from PyQt4.QtCore import SIGNAL  #@UnresolvedImport  #@IgnorePep8
+from PyQt4.Qt import Qt  #@UnresolvedImport  #@IgnorePep8
 from PIL import Image  #@UnresolvedImport #@IgnorePep8
 import ImageQt
 
 import logging
+from copy import deepcopy
 
 log = logging.getLogger(__name__)
 
@@ -32,8 +34,18 @@ def crop(image):
     return image.transform((sx, sy), Image.EXTENT, (0, 0, sx, sy))
 
 
+def grayscale():
+    colortable = []
+    for r in range(256):
+        c = QtGui.QColor(QtGui.qRgb(r, r, r))
+        colortable.append(c)
+    return colortable
+
+
 def dist(color1, color2):
-    return sum([abs(c1 - c2) for  c1, c2 in zip(color1, color2)])
+    return (abs(color1.red() - color2.red()) +
+        abs(color1.green() - color2.green()) +
+        abs(color1.blue() - color2.blue()))
 
 
 class ResizableImageLabel(QtGui.QLabel):
@@ -53,30 +65,31 @@ class MainWindow(QtGui.QMainWindow):
         super(MainWindow, self).__init__()
         self.scanned_image = None
         self.scanned_pil = None
+        self.colors = None
         self.setupUi()
 
         self.saveButton.clicked.connect(self.close)
         self.actionQuit.activated.connect(self.close)
         self.scanButton.clicked.connect(self.scan)
-        self.reduceColorsButton.clicked.connect(self.filterOutUnimportantColors)
+        self.resetColorsButton.clicked.connect(self.resetColors)
+        self.numColorSlider.valueChanged.connect(self.updateNumColors)
         self.connect(self.previewView, SIGNAL('resize()'), self.updatePreview)
 
     def setupUi(self):
         self.centralwidget = QtGui.QWidget(self)
 
-        self.scanButton = KPushButton(self.centralwidget)
-        spacerItem = QtGui.QSpacerItem(40, 20, QtGui.QSizePolicy.Expanding, QtGui.QSizePolicy.Minimum)
-        self.reduceColorsButton = KPushButton(self.centralwidget)
-        self.numColorSpinBox = KIntSpinBox(self.centralwidget)
-        self.numColorSpinBox.setMinimum(2)
-        self.numColorSpinBox.setMaximum(16)
-        self.numColorSpinBox.setProperty("value", 16)
+        self.scanButton = KPushButton()
+        self.nColorLabel = QtGui.QLabel()
+        self.numColorSlider = QtGui.QSlider(Qt.Horizontal)
+        self.numColorSlider.setMinimum(2)
+        self.numColorSlider.setTracking(False)
+        self.resetColorsButton = KPushButton()
 
         scanSettingsLayout = QtGui.QHBoxLayout()
         scanSettingsLayout.addWidget(self.scanButton)
-        scanSettingsLayout.addItem(spacerItem)
-        scanSettingsLayout.addWidget(self.reduceColorsButton)
-        scanSettingsLayout.addWidget(self.numColorSpinBox)
+        scanSettingsLayout.addWidget(self.numColorSlider)
+        scanSettingsLayout.addWidget(self.nColorLabel)
+        scanSettingsLayout.addWidget(self.resetColorsButton)
 
         colorSpacerLeft = QtGui.QSpacerItem(40, 20, QtGui.QSizePolicy.Expanding, QtGui.QSizePolicy.Minimum)
         self.colorEditorCells = KColorCells(self.centralwidget, 16, 16)
@@ -140,7 +153,7 @@ class MainWindow(QtGui.QMainWindow):
     def retranslateUi(self):
         self.setWindowTitle(kdecore.i18n(_fromUtf8("MainWindow")))
         self.scanButton.setText(kdecore.i18n(_fromUtf8("Scan")))
-        self.reduceColorsButton.setText(kdecore.i18n(_fromUtf8("Reduce Colors")))
+        self.resetColorsButton.setText(kdecore.i18n(_fromUtf8("Reset")))
         self.generatedOutputNameTextLabel.setText(kdecore.i18n(_fromUtf8("Output:")))
         self.generatedOutputNameLabel.setText(kdecore.i18n(_fromUtf8("generated_output_file_name")))
         self.saveButton.setText(kdecore.i18n(_fromUtf8("Save")))
@@ -155,89 +168,85 @@ class MainWindow(QtGui.QMainWindow):
 
     def scan(self):
         self.scanned_pil = self.device.scan()
+        self.scanned_pil = crop(self.scanned_pil)
+        self.scanned_pil = self.scanned_pil.convert('L')
+        self.scanned_image = ImageQt.ImageQt(self.scanned_pil)
         self.showInfo()
-        self.scanned_image = ImageQt.ImageQt(crop(self.scanned_pil))
+
+        self.colors = grayscale()
+        self.colors_orig = deepcopy(self.colors)
+        n_color, self.histo = self.createHistogram()
+
+        for i, c in enumerate(self.colors):
+            self.scanned_image.setColor(i, c.rgba())
+
+        self.numColorSlider.setMaximum(n_color)
+        self.numColorSlider.setValue(n_color)
+        self.showImage()
+
+    def showImage(self):
         self.updateColorCells()
         self.updatePreview()
 
     def updatePreview(self):
         if self.scanned_image:
-            scaled_image = self.scanned_image.scaled(self.previewView.size(), aspectRatioMode=QtCore.Qt.KeepAspectRatio)
+            for i, c in enumerate(self.colors):
+                self.scanned_image.setColor(i, c.rgba())
+            scaled_image = self.scanned_image.scaled(self.previewView.size(),
+                                                     aspectRatioMode=QtCore.Qt.KeepAspectRatio)
             pm = QtGui.QPixmap.fromImage(scaled_image)
             self.previewView.setPixmap(pm)
 
     def updateColorCells(self):
-        if self.scanned_image:
-            if self.scanned_pil.mode != 'P':
-                self.convertImage()
-            colors = [QtGui.QColor(rgb) for rgb in self.scanned_image.colorTable()]
-            for i, c in enumerate(colors):
-                self.colorEditorCells.setColor(i, c)
-        else:
-            for i in range(self.colorEditorCells.count()):
-                self.colorEditorCells.setColor(i, QtGui.QColor())
+        for i, (ci, freq) in enumerate(self.histo):
+            c = self.colors[ci] if freq else QtGui.QColor()
+            self.colorEditorCells.setColor(i, c)
 
-    def reduceColorsPressed(self):
-        self.reduceColors(self.numColorSpinBox.value())
+    def updateColorCells_flat(self):
+        for i in range(256):
+            c = self.colors[i]
+            self.colorEditorCells.setColor(i, c)
+
+    def updateNumColors(self):
+        self.reduceColors(self.numColorSlider.value())
+        self.nColorLabel.setText("%3d" % self.numColorSlider.value())
         self.updateColorCells()
 
-    def convertImage(self):
-        converted = crop(self.scanned_pil).convert('P')
-        colortable = []
-        palette = converted.getpalette()
-        for i in range(0, len(palette), 3):
-            colortable.append(QtGui.qRgb(*palette[i:i + 3]))
-        self.scanned_pil = converted
-
-        self.scanned_image = ImageQt.ImageQt(converted)
-        self.scanned_image.setColorTable(colortable)
-
-
-    def filterOutUnimportantColors(self):
-        if self.scanned_pil:
-            log.info("Removing unimportant colors.")
-            if self.scanned_pil.mode != 'P':
-                self.convertImage()
-            num_color = self.numColorSpinBox.value()-1
-            histo = self.scanned_pil.histogram()
-            log.debug('Histogram: %s' % histo)
-            histo = zip(range(len(histo)), histo)
-            log.debug('Histogram zipped: %s' % histo)
-            histo.sort(key=lambda x: -x[1])
-            log.debug('Histogram sorted: %s' % histo)
-
-            ref_colors = [(c,c,c) for c in range(0,256,256/num_color)] + [(255,255,255)]
-
-            colors = self.scanned_pil.getpalette()
-            for ci, freq in histo:
-            #for ci, freq in histo[num_color:]:
-                color = colors[ci * 3:ci * 3 + 3]
-                distances = []
-                #for cr, dummy in histo[:num_color]:
-                #    ref_color = colors[cr * 3:cr * 3 + 3]
-                for ref_color in ref_colors:
-                    distances.append(dist(ref_color, color))
-                nearest = min(xrange(len(distances)), key=distances.__getitem__)
-                #cn = histo[nearest][0]
-                #nearest_color = colors[cn * 3:cn * 3 + 3]
-                nearest_color = ref_colors[nearest]
-                #log.info("Removed color %d (%d,%d,%d) %d px." % (ci, color[0], color[1], color[2], freq))
-                colors[ci * 3:ci * 3 + 3] = nearest_color
-            log.info("Colors now %d: %s" % (len(colors), str(colors)))
-            self.scanned_pil.putpalette(colors)
-            colortable = []
-            for i in range(0, len(colors), 3):
-                colortable.append(QtGui.qRgb(*colors[i:i + 3]))
-            self.scanned_image = ImageQt.ImageQt(crop(self.scanned_pil))
-            self.scanned_image.setColorTable(colortable)
-            self.updateColorCells()
-            self.updatePreview()
+    def createHistogram(self):
+        histo = self.scanned_pil.histogram()[:256]
+        log.debug('Histogram (%d entries): %s' % (len(histo), histo))
+        histo = zip(range(len(histo)), histo)
+        histo.sort(key=lambda x: -x[1])
+        log.debug('Histogram zipped and sorted: %s' % histo)
+        return len([ci for (ci, frequency) in histo if frequency > 0]), histo
 
     def reduceColors(self, num):
         if self.scanned_pil:
-            log.info('Reducing colors to %d' % num)
-            self.scanned_pil = self.scanned_pil.quantize(num, method=0)
-            self.convertImage()
-            self.showInfo()
-            self.updatePreview()
+            log.info("Removing unimportant colors down to %3d" % num)
+
+            self.colors = deepcopy(self.colors_orig)
+            color_steps = self.numColorSlider.value() - 1
+            ref_colors = [QtGui.QColor(c, c, c) for c in range(0, 255, 256 / color_steps)]
+            ref_colors.append(QtGui.QColor(255, 255, 255))
+            log.debug("Reference colors are: %s" % [str(c.name()) for c in ref_colors])
+
+            for color_index, dummy_frequency in self.histo:
+                color = self.colors[color_index]
+                distances = []
+                for ref_color in ref_colors:
+                    distances.append(dist(ref_color, color))
+                nearest = min(range(len(distances)), key=distances.__getitem__)
+                nearest_color = ref_colors[nearest]
+                self.colors[color_index] = nearest_color
+            log.debug("Colors now %d: %s" % (len(self.colors), ",".join([str(c.name()) for c in self.colors])))
             self.updateColorCells()
+            self.updatePreview()
+
+    def resetColors(self):
+        log.info("resetColors")
+        self.numColorSlider.setValue(self.numColorSlider.maximum())
+        self.colors = deepcopy(self.colors_orig)
+        self.updateColorCells()
+        self.updatePreview()
+
+
