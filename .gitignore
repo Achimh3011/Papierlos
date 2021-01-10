@@ -36,3 +36,7 @@ nosetests.xml
 
 .directory
 test*.png
+
+# JetBrains
+*.iml
+.idea
